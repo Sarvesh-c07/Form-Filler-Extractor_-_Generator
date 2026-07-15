@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Form Filler — read a Word form, answer, export</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --ink:#16191d; --ink-soft:#5b6169; --ink-faint:#8b9098;
+    --line:#e4e6e2; --line-strong:#d3d6d1;
+    --canvas:#f4f5f2; --paper:#ffffff;
+    --accent:#0f7361; --accent-deep:#0b5a4c; --accent-soft:#e7f2ef;
+    --warn:#9a5b00; --warn-soft:#fbf1e0;
+    --radius:12px; --radius-sm:9px;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:var(--sans); color:var(--ink); background:var(--canvas);
+    line-height:1.5; -webkit-font-smoothing:antialiased; padding-bottom:120px;
+  }
+  .wrap{max-width:880px; margin:0 auto; padding:0 20px}
+
+  /* ---- Masthead ---- */
+  header.mast{padding:34px 0 18px}
+  .eyebrow{font:600 11px/1 var(--mono); letter-spacing:.18em; text-transform:uppercase; color:var(--accent); display:flex; align-items:center; gap:9px}
+  .eyebrow::before{content:""; width:22px; height:2px; background:var(--accent); display:inline-block}
+  h1{font-size:26px; letter-spacing:-.02em; margin:12px 0 6px; font-weight:680}
+  .sub{color:var(--ink-soft); font-size:15px; max-width:60ch}
+
+  /* ---- Dropzone ---- */
+  .drop{
+    margin-top:26px; background:var(--paper); border:1.5px dashed var(--line-strong);
+    border-radius:var(--radius); padding:46px 28px; text-align:center; cursor:pointer;
+    transition:border-color .15s, background .15s;
+  }
+  .drop:hover,.drop.hot{border-color:var(--accent); background:var(--accent-soft)}
+  .drop .ic{width:44px; height:44px; margin:0 auto 14px; color:var(--accent)}
+  .drop h2{margin:0 0 6px; font-size:17px; font-weight:640}
+  .drop p{margin:0; color:var(--ink-soft); font-size:14px}
+  .drop .browse{color:var(--accent); font-weight:600; text-decoration:underline; text-underline-offset:2px}
+  .steps{display:flex; gap:14px; margin-top:22px; flex-wrap:wrap}
+  .step{flex:1 1 200px; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius-sm); padding:14px 16px}
+  .step .n{font:600 11px/1 var(--mono); color:var(--accent); letter-spacing:.1em}
+  .step h3{margin:8px 0 3px; font-size:14px; font-weight:620}
+  .step p{margin:0; font-size:13px; color:var(--ink-soft)}
+
+  /* ---- Document card ---- */
+  .docCard{background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px; margin-top:8px; display:flex; gap:16px; align-items:flex-start}
+  .docCard .file{width:38px; height:38px; flex:none; border-radius:8px; background:var(--accent-soft); color:var(--accent-deep); display:grid; place-items:center}
+  .docMeta{flex:1; min-width:0}
+  .docName{font-weight:640; font-size:15px; word-break:break-word}
+  .docStat{font-size:13px; color:var(--ink-soft); margin-top:2px}
+  .metaGrid{display:flex; flex-wrap:wrap; gap:10px 26px; margin-top:12px}
+  .metaItem{min-width:0}
+  .metaItem .k{font:600 10px/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint)}
+  .metaItem .v{font-size:14px; margin-top:3px; font-weight:520}
+
+  /* ---- Section headings ---- */
+  .sectLabel{display:flex; align-items:center; gap:12px; margin:30px 2px 12px}
+  .sectLabel span{font:600 11px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft); white-space:nowrap}
+  .sectLabel::after{content:""; height:1px; background:var(--line); flex:1}
+
+  /* ---- Question cards ---- */
+  .qlist{border-left:2px solid var(--line); padding-left:0; margin-left:6px}
+  .qcard{background:var(--paper); border:1px solid var(--line); border-radius:var(--radius-sm); padding:16px 18px; margin:0 0 12px 16px; position:relative}
+  .qcard::before{content:""; position:absolute; left:-19px; top:22px; width:10px; height:10px; border-radius:50%; background:var(--paper); border:2px solid var(--line-strong)}
+  .qcard.filled::before{background:var(--accent); border-color:var(--accent)}
+  .qhead{display:flex; gap:10px; align-items:flex-start}
+  .chip{font:600 11px/1 var(--mono); letter-spacing:.03em; color:var(--accent-deep); background:var(--accent-soft); border-radius:6px; padding:5px 7px; flex:none; margin-top:1px}
+  .chip.ref{color:var(--warn); background:var(--warn-soft)}
+  .qtext{font-weight:580; font-size:15px}
+  .qguide{font-size:13px; color:var(--ink-soft); margin-top:5px}
+  .preset{display:inline-block; font:600 9px/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--accent-deep); background:var(--accent-soft); border:1px solid #bfe0d7; border-radius:5px; padding:3px 5px; vertical-align:middle; margin-left:8px}
+  .answer{margin-top:11px}
+  label.al{display:block; font:600 10px/1 var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:6px}
+  textarea,input[type=text],select{
+    width:100%; font-family:var(--sans); font-size:14.5px; color:var(--ink);
+    border:1px solid var(--line-strong); border-radius:8px; padding:9px 11px; background:#fdfdfc;
+    transition:border-color .12s, box-shadow .12s; resize:vertical;
+  }
+  textarea{min-height:44px}
+  textarea:focus,input:focus,select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  select{cursor:pointer; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%235b6169' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 11px center; padding-right:30px}
+
+  /* ---- Sticky action bar ---- */
+  .bar{position:fixed; left:0; right:0; bottom:0; background:rgba(255,255,255,.86); backdrop-filter:saturate(1.4) blur(10px); border-top:1px solid var(--line); padding:12px 0}
+  .barIn{max-width:880px; margin:0 auto; padding:0 20px; display:flex; align-items:center; gap:16px}
+  .prog{flex:1; min-width:0}
+  .progTop{display:flex; justify-content:space-between; font-size:12.5px; color:var(--ink-soft); margin-bottom:6px}
+  .progTrack{height:6px; background:var(--line); border-radius:99px; overflow:hidden}
+  .progFill{height:100%; width:0; background:var(--accent); border-radius:99px; transition:width .25s ease}
+  .btn{font-family:var(--sans); font-size:14px; font-weight:600; border-radius:9px; padding:11px 18px; cursor:pointer; border:1px solid transparent; white-space:nowrap; transition:background .12s, border-color .12s, transform .05s}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:var(--accent); color:#fff}
+  .btn.primary:hover{background:var(--accent-deep)}
+  .btn.primary:disabled{background:var(--line-strong); color:#fff; cursor:not-allowed}
+  .btn.ghost{background:transparent; color:var(--ink-soft); border-color:var(--line-strong)}
+  .btn.ghost:hover{color:var(--ink); border-color:var(--ink-faint)}
+
+  /* ---- Toast ---- */
+  .toast{position:fixed; left:50%; bottom:88px; transform:translateX(-50%) translateY(14px); background:var(--ink); color:#fff; padding:12px 18px; border-radius:10px; font-size:14px; opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; display:flex; align-items:center; gap:10px; z-index:50; box-shadow:0 8px 30px rgba(0,0,0,.18)}
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+  .toast .dot{width:8px; height:8px; border-radius:50%; background:#4ade80; flex:none}
+
+  .err{background:var(--warn-soft); border:1px solid #eccf9a; color:#6b4400; border-radius:var(--radius-sm); padding:14px 16px; margin-top:18px; font-size:14px}
+  .hidden{display:none !important}
+  .foot{color:var(--ink-faint); font-size:12.5px; text-align:center; margin:34px 0 6px}
+
+  @media (max-width:560px){
+    h1{font-size:22px}
+    .barIn{flex-wrap:wrap}
+    .prog{order:2; flex-basis:100%}
+    .btn{flex:1}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none !important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="mast">
+    <div class="eyebrow">Form Filler</div>
+    <h1>Read a Word form. Answer it. Export the filled file.</h1>
+    <p class="sub">Upload a blank <strong>.docx</strong> questionnaire. The tool reads every question and gives you a field to answer each one. When you're done, it writes your answers back into the document and hands you the completed Word file.</p>
+  </header>
+
+  <!-- STAGE 1: upload -->
+  <section id="stageUpload">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Upload a Word document">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke-linecap="round"/></svg>
+      <h2>Drop your blank form here</h2>
+      <p>or <span class="browse">browse your files</span> &nbsp;·&nbsp; Word .docx</p>
+      <input type="file" id="file" accept=".docx" class="hidden">
+    </div>
+    <div class="steps">
+      <div class="step"><div class="n">01</div><h3>It reads the form</h3><p>Every question in the document's table is detected automatically.</p></div>
+      <div class="step"><div class="n">02</div><h3>You answer</h3><p>Type into a clean field for each question — no scrolling through the doc.</p></div>
+      <div class="step"><div class="n">03</div><h3>Export filled .docx</h3><p>Answers are written into the original layout and downloaded as Word.</p></div>
+    </div>
+    <div id="err" class="err hidden"></div>
+  </section>
+
+  <!-- STAGE 2: form -->
+  <section id="stageForm" class="hidden">
+    <div class="docCard">
+      <div class="file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 3v5h5" stroke-linejoin="round"/><path d="M6 3h8l5 5v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke-linejoin="round"/></svg></div>
+      <div class="docMeta">
+        <div class="docName" id="docName">document.docx</div>
+        <div class="docStat" id="docStat">— questions found</div>
+        <div class="metaGrid" id="metaGrid"></div>
+      </div>
+    </div>
+
+    <div id="metaSection" class="hidden">
+      <div class="sectLabel"><span>Document details</span></div>
+      <div class="qlist" id="metaFields"></div>
+    </div>
+
+    <div class="sectLabel"><span>Questions</span></div>
+    <div class="qlist" id="qFields"></div>
+
+    <p class="foot">Your file never leaves this page — everything runs in your browser.</p>
+  </section>
+</div>
+
+<!-- Sticky bar -->
+<div class="bar hidden" id="bar">
+  <div class="barIn">
+    <div class="prog">
+      <div class="progTop"><span id="progLabel">0 of 0 answered</span><span id="progPct">0%</span></div>
+      <div class="progTrack"><div class="progFill" id="progFill"></div></div>
+    </div>
+    <button class="btn ghost" id="resetBtn">Upload another</button>
+    <button class="btn primary" id="genBtn" disabled>Generate filled Word file</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="dot"></span><span id="toastMsg">Downloaded</span></div>
+
+<script>
+const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const XMLSPACE = "http://www.w3.org/XML/1998/namespace";
+
+let zip = null;         // JSZip instance of the uploaded docx
+let xmlDoc = null;      // parsed word/document.xml
+let fields = [];        // {kind, id, chip, primary, guidance, cell, value, inputType}
+let originalName = "form.docx";
+
+/* ---------- Preset answers ----------
+   Questions whose answer is always the same for this form.
+   Keyed by the question NUMBER (Q3 -> 3, Q7 -> 7). These load
+   pre-filled but stay editable. Use \n for line breaks.
+   To add more later, just add another line here.               */
+const PRESET_ANSWERS = {
+  3: "3S PHARMACEUTICALS INDIA PVT LTD\n20B : 458762\n21B : 458763",
+  7: "PHARMACEUTICALS"
+};
+
+const $ = id => document.getElementById(id);
+
+/* ---------- DOM helpers for the docx XML ---------- */
+function directChildren(el, name){
+  return Array.from(el.childNodes).filter(n => n.nodeType===1 && n.namespaceURI===W && n.localName===name);
+}
+function cellText(cell){
+  const ts = cell.getElementsByTagNameNS(W, "t");
+  let s = "";
+  for(const t of ts) s += t.textContent || "";
+  return s.replace(/\s+/g," ").trim();
+}
+function rowText(row){
+  return directChildren(row, "tc").map(cellText).join("  ").toLowerCase();
+}
+
+/* ---------- Read the uploaded file ---------- */
+async function loadFile(file){
+  hideErr();
+  if(!file) return;
+  if(!/\.docx$/i.test(file.name)){
+    showErr("That's not a .docx file. Please upload a Word document ending in .docx (not .doc or .pdf).");
+    return;
+  }
+  originalName = file.name;
+  try{
+    const buf = await file.arrayBuffer();
+    zip = await JSZip.loadAsync(buf);
+    const docFile = zip.file("word/document.xml");
+    if(!docFile){ showErr("This file doesn't look like a normal Word document (no word/document.xml inside)."); return; }
+    const xmlStr = await docFile.async("string");
+    xmlDoc = new DOMParser().parseFromString(xmlStr, "application/xml");
+    if(xmlDoc.getElementsByTagName("parsererror").length){ showErr("Couldn't read the document's contents. It may be corrupted."); return; }
+    buildFields();
+    if(fields.filter(f=>f.kind==="qa").length === 0){
+      showErr("No questions were found. This tool expects a form built as a table where each row is a question and the last column is where the answer goes.");
+      return;
+    }
+    renderForm(file);
+  }catch(e){
+    console.error(e);
+    showErr("Something went wrong reading the file: " + e.message);
+  }
+}
+
+/* ---------- Detect questions & answer cells ---------- */
+function buildFields(){
+  fields = [];
+  const rows = Array.from(xmlDoc.getElementsByTagNameNS(W, "tr"));
+
+  // 1. Find the header row that marks the start of the Q&A section.
+  let headerIdx = -1;
+  for(let i=0;i<rows.length;i++){
+    const t = rowText(rows[i]);
+    if(/company\s*comments/.test(t) || (/\bquestion\b/.test(t) && /\brequest\b/.test(t))){ headerIdx = i; break; }
+  }
+
+  let n = 0;
+
+  // 2. Rows BEFORE the header that look like "Label:" -> value  become editable detail fields.
+  if(headerIdx > 0){
+    for(let i=0;i<headerIdx;i++){
+      const cells = directChildren(rows[i], "tc");
+      for(let c=0;c<cells.length-1;c++){
+        const label = cellText(cells[c]);
+        if(/:\s*$/.test(label) && label.length <= 40){
+          const valCell = cells[c+1];
+          fields.push({
+            kind:"meta", id:"f"+(n++), chip:"REF",
+            primary:label.replace(/\s*:\s*$/,""), guidance:"",
+            cell:valCell, value:cellText(valCell), inputType:"text"
+          });
+        }
+      }
+    }
+  }
+
+  // 3. Rows AFTER the header are the questions. Answer = last cell of the row.
+  const start = headerIdx >= 0 ? headerIdx + 1 : 0;
+  for(let i=start;i<rows.length;i++){
+    const cells = directChildren(rows[i], "tc");
+    if(cells.length < 2) continue;                       // full-width notes / spacers
+    const answerCell = cells[cells.length-1];
+    const labelParts = cells.slice(0,-1).map(cellText).filter(Boolean);
+    if(labelParts.length === 0) continue;                // nothing to ask
+    const primary = labelParts[0];
+    const guidance = labelParts.slice(1).join("   ");
+
+    // chip = leading question number if present (e.g. "8-...")
+    const m = primary.match(/^\s*(\d+)\s*[-.)]/);
+    const qNum = m ? parseInt(m[1], 10) : null;
+    const chip = m ? ("Q"+m[1]) : "•";
+
+    // input type inference
+    let inputType = "textarea";
+    const g = guidance.toLowerCase().trim();
+    if(/^yes\s*\/\s*no\b/.test(g) || g === "yes/no") inputType = "yesno";
+
+    // preset answers override the (usually empty) cell value
+    let value = cellText(answerCell);
+    let preset = false;
+    if(qNum !== null && Object.prototype.hasOwnProperty.call(PRESET_ANSWERS, qNum)){
+      value = PRESET_ANSWERS[qNum];
+      preset = true;
+    }
+
+    fields.push({ kind:"qa", id:"f"+(n++), chip, primary, guidance, cell:answerCell, value, inputType, preset });
+  }
+}
+
+/* ---------- Render the form UI ---------- */
+function renderForm(file){
+  $("stageUpload").classList.add("hidden");
+  $("stageForm").classList.remove("hidden");
+  $("bar").classList.remove("hidden");
+
+  const qCount = fields.filter(f=>f.kind==="qa").length;
+  $("docName").textContent = file.name;
+  $("docStat").textContent = qCount + (qCount===1?" question found":" questions found");
+
+  // Document details = meta fields shown as compact read context + editable
+  const metas = fields.filter(f=>f.kind==="meta");
+  const mg = $("metaGrid"); mg.innerHTML = "";
+  metas.forEach(f=>{
+    const d = document.createElement("div"); d.className="metaItem";
+    d.innerHTML = `<div class="k">${esc(f.primary)}</div><div class="v">${esc(f.value)||"—"}</div>`;
+    mg.appendChild(d);
+  });
+
+  const metaWrap = $("metaFields"); metaWrap.innerHTML = "";
+  if(metas.length){
+    $("metaSection").classList.remove("hidden");
+    metas.forEach(f => metaWrap.appendChild(fieldCard(f)));
+  }else{
+    $("metaSection").classList.add("hidden");
+  }
+
+  const qWrap = $("qFields"); qWrap.innerHTML = "";
+  fields.filter(f=>f.kind==="qa").forEach(f => qWrap.appendChild(fieldCard(f)));
+
+  updateProgress();
+}
+
+function fieldCard(f){
+  const card = document.createElement("div");
+  card.className = "qcard" + (f.value.trim() ? " filled" : "");
+  card.dataset.fid = f.id;
+
+  const head = document.createElement("div"); head.className="qhead";
+  head.innerHTML = `<span class="chip${f.kind==='meta'?' ref':''}">${esc(f.chip)}</span>
+    <div style="flex:1;min-width:0">
+      <div class="qtext">${esc(f.primary)}${f.preset?'<span class="preset">Preset</span>':''}</div>
+      ${f.guidance ? `<div class="qguide">${esc(f.guidance)}</div>` : ``}
+    </div>`;
+  card.appendChild(head);
+
+  const ans = document.createElement("div"); ans.className="answer";
+  const lab = document.createElement("label"); lab.className="al";
+  lab.textContent = f.preset ? "Preset answer · editable" : (f.kind==="meta" ? "Value" : "Your answer");
+  lab.setAttribute("for", "in_"+f.id);
+  ans.appendChild(lab);
+
+  let input;
+  if(f.inputType === "yesno"){
+    input = document.createElement("select");
+    ["", "Yes", "No"].forEach(opt=>{
+      const o = document.createElement("option");
+      o.value = opt; o.textContent = opt===""?"— select —":opt;
+      if(opt && f.value.trim().toLowerCase()===opt.toLowerCase()) o.selected=true;
+      input.appendChild(o);
+    });
+  }else if(f.inputType === "text"){
+    input = document.createElement("input"); input.type="text"; input.value=f.value;
+  }else{
+    input = document.createElement("textarea"); input.value=f.value; input.rows = 1;
+    input.style.height = "auto";
+  }
+  input.id = "in_"+f.id;
+  input.addEventListener("input", ()=>{
+    f.value = input.value;
+    card.classList.toggle("filled", f.value.trim().length>0);
+    if(input.tagName==="TEXTAREA"){ input.style.height="auto"; input.style.height=(input.scrollHeight+2)+"px"; }
+    updateProgress();
+  });
+  ans.appendChild(input);
+  card.appendChild(ans);
+
+  // grow textarea to fit any prefilled content after it's in the DOM
+  if(input.tagName==="TEXTAREA"){ requestAnimationFrame(()=>{ input.style.height="auto"; input.style.height=(input.scrollHeight+2)+"px"; }); }
+  return card;
+}
+
+function updateProgress(){
+  const qs = fields.filter(f=>f.kind==="qa");
+  const done = qs.filter(f=>f.value.trim().length>0).length;
+  const total = qs.length;
+  const pct = total ? Math.round(done/total*100) : 0;
+  $("progLabel").textContent = `${done} of ${total} answered`;
+  $("progPct").textContent = pct + "%";
+  $("progFill").style.width = pct + "%";
+  $("genBtn").disabled = done === 0;
+}
+
+/* ---------- Write answers back & export ---------- */
+function setCellText(cell, text){
+  // keep the first paragraph (and its formatting), drop any extra paragraphs, replace runs
+  let ps = directChildren(cell, "p");
+  for(let i=1;i<ps.length;i++) cell.removeChild(ps[i]);
+  let p = ps[0];
+  if(!p){ p = xmlDoc.createElementNS(W,"w:p"); cell.appendChild(p); }
+  // remove existing runs, keep pPr
+  directChildren(p, "r").forEach(r=>p.removeChild(r));
+
+  const run = xmlDoc.createElementNS(W,"w:r");
+  const lines = String(text).split(/\r?\n/);
+  lines.forEach((line, idx)=>{
+    if(idx>0) run.appendChild(xmlDoc.createElementNS(W,"w:br"));
+    const t = xmlDoc.createElementNS(W,"w:t");
+    t.setAttributeNS(XMLSPACE, "xml:space", "preserve");
+    t.textContent = line;
+    run.appendChild(t);
+  });
+  p.appendChild(run);
+}
+
+async function generate(){
+  try{
+    fields.forEach(f => setCellText(f.cell, f.value || ""));
+    const serialized = new XMLSerializer().serializeToString(xmlDoc);
+    zip.file("word/document.xml", serialized);
+    const blob = await zip.generateAsync({
+      type:"blob",
+      mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      compression:"DEFLATE"
+    });
+    const outName = originalName.replace(/\.docx$/i,"") + " - filled.docx";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = outName; document.body.appendChild(a); a.click();
+    a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 1500);
+    toast("Saved " + outName);
+  }catch(e){
+    console.error(e);
+    showErr("Couldn't build the file: " + e.message);
+  }
+}
+
+/* ---------- misc UI ---------- */
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function showErr(msg){ const e=$("err"); e.textContent=msg; e.classList.remove("hidden"); }
+function hideErr(){ $("err").classList.add("hidden"); }
+let toastT=null;
+function toast(msg){ $("toastMsg").textContent=msg; const t=$("toast"); t.classList.add("show"); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"), 3200); }
+
+function reset(){
+  zip=null; xmlDoc=null; fields=[]; originalName="form.docx";
+  $("file").value="";
+  $("stageForm").classList.add("hidden");
+  $("bar").classList.add("hidden");
+  $("stageUpload").classList.remove("hidden");
+  hideErr();
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+
+/* ---------- wiring ---------- */
+const drop = $("drop"), fileInput = $("file");
+drop.addEventListener("click", ()=>fileInput.click());
+drop.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); fileInput.click(); }});
+fileInput.addEventListener("change", e=>loadFile(e.target.files[0]));
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add("hot"); }));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", e=>{ const f=e.dataTransfer.files[0]; if(f) loadFile(f); });
+$("genBtn").addEventListener("click", generate);
+$("resetBtn").addEventListener("click", reset);
+</script>
+</body>
+</html>
